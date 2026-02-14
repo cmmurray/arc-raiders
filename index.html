@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ARC Raiders Crafting & Item Relationship Explorer</title>
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #070b11;
+        --surface: #101723;
+        --panel: #141e2f;
+        --text: #eef2ff;
+        --muted: #9ba9c7;
+        --accent: #4cc4ff;
+        --warn: #ff8f4c;
+        --ok: #6ee7b7;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: Inter, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+        color: var(--text);
+        background: radial-gradient(circle at top, #0f1623, var(--bg));
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 340px 1fr;
+        min-height: 100vh;
+      }
+
+      .sidebar {
+        border-right: 1px solid #263248;
+        background: rgba(16, 23, 35, 0.95);
+        padding: 1rem;
+        overflow-y: auto;
+      }
+
+      .sidebar h1 {
+        margin: 0;
+        font-size: 1.2rem;
+      }
+
+      .subtitle {
+        margin: 0.3rem 0 1rem;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .control {
+        margin-bottom: 0.8rem;
+      }
+
+      .control label {
+        display: block;
+        font-size: 0.8rem;
+        color: var(--muted);
+        margin-bottom: 0.3rem;
+      }
+
+      .control input,
+      .control select,
+      .control button {
+        width: 100%;
+        border: 1px solid #2d3a53;
+        background: #111a29;
+        color: var(--text);
+        border-radius: 8px;
+        padding: 0.55rem 0.7rem;
+      }
+
+      .control button {
+        cursor: pointer;
+      }
+
+      .control button:hover {
+        border-color: var(--accent);
+      }
+
+      .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.5rem;
+      }
+
+      .stat {
+        border: 1px solid #253149;
+        border-radius: 8px;
+        padding: 0.5rem;
+        background: #0f1726;
+      }
+
+      .stat strong {
+        display: block;
+        font-size: 1.05rem;
+      }
+
+      .stat span {
+        font-size: 0.78rem;
+        color: var(--muted);
+      }
+
+      .details {
+        margin-top: 1rem;
+        border-top: 1px solid #263248;
+        padding-top: 0.8rem;
+      }
+
+      .details h2 {
+        margin: 0 0 0.3rem;
+        font-size: 1rem;
+      }
+
+      .badge {
+        display: inline-block;
+        border: 1px solid #304463;
+        border-radius: 999px;
+        padding: 0.1rem 0.55rem;
+        font-size: 0.75rem;
+        color: var(--muted);
+      }
+
+      ul { padding-left: 1rem; }
+      li { margin-bottom: 0.2rem; color: #d9e4ff; }
+
+      #graph {
+        height: 100vh;
+      }
+
+      .legend {
+        position: fixed;
+        bottom: 12px;
+        right: 12px;
+        display: flex;
+        gap: 0.35rem;
+        flex-wrap: wrap;
+        max-width: 420px;
+      }
+
+      .chip {
+        background: rgba(20, 30, 47, 0.9);
+        border: 1px solid #2d3a53;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        padding: 0.25rem 0.6rem;
+      }
+
+      @media (max-width: 980px) {
+        .layout { grid-template-columns: 1fr; }
+        #graph { height: 62vh; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar">
+        <h1>ARC Raiders Crafting Tree</h1>
+        <p class="subtitle">Interactive relationship map of resources, crafted parts, and final gear.</p>
+
+        <div class="control">
+          <label for="search">Search node</label>
+          <input id="search" type="text" placeholder="Type item name..." />
+        </div>
+
+        <div class="control">
+          <label for="category">Category filter</label>
+          <select id="category">
+            <option value="all">All categories</option>
+          </select>
+        </div>
+
+        <div class="control">
+          <button id="clear">Reset filters & highlights</button>
+        </div>
+
+        <section class="stat-grid" id="stats"></section>
+
+        <section class="details" id="details">
+          <h2>Select an item</h2>
+          <p class="subtitle">Click any node to inspect recipe inputs and downstream crafts.</p>
+        </section>
+      </aside>
+
+      <main id="graph"></main>
+    </div>
+
+    <div class="legend" id="legend"></div>
+
+    <script>
+      const CATEGORIES = {
+        Raw: "#5ad8ff",
+        Component: "#b48bff",
+        Utility: "#ffcc5a",
+        Weapon: "#ff7b7b",
+        Armor: "#79f0a9",
+        Tool: "#ffa15a"
+      };
+
+      const ITEMS = [
+        ["Scrap Metal", "Raw"], ["Polymer", "Raw"], ["Copper Coil", "Raw"], ["Micro Battery", "Raw"], ["Optic Glass", "Raw"], ["Ceramic Plate", "Raw"], ["Conductive Gel", "Raw"], ["Sensor Lens", "Raw"], ["Arc Fragment", "Raw"], ["Stabilizer Dust", "Raw"],
+        ["Reinforced Alloy", "Component"], ["Circuit Board", "Component"], ["Servo Motor", "Component"], ["Targeting Module", "Component"], ["Energy Regulator", "Component"], ["Nano Weave", "Component"], ["Shock Lining", "Component"], ["Weapon Chassis", "Component"], ["Rail Assembly", "Component"], ["Pulse Core", "Component"],
+        ["Med Injector", "Utility"], ["EMP Grenade", "Utility"], ["Repair Foam", "Utility"], ["Jammer Beacon", "Utility"],
+        ["Ranger Carbine", "Weapon"], ["Volt SMG", "Weapon"], ["Tempest Shotgun", "Weapon"], ["Arc Railgun", "Weapon"], ["Ion Sidearm", "Weapon"],
+        ["Scout Vest", "Armor"], ["Bulwark Armor", "Armor"], ["Recon Helmet", "Armor"], ["Arc Shield Pack", "Armor"],
+        ["Extraction Drill", "Tool"], ["Signal Uplink", "Tool"], ["Tactical Grappler", "Tool"]
+      ];
+
+      const RECIPES = [
+        ["Scrap Metal", "Reinforced Alloy", "x3"], ["Ceramic Plate", "Reinforced Alloy", "x2"],
+        ["Polymer", "Circuit Board", "x2"], ["Copper Coil", "Circuit Board", "x2"], ["Conductive Gel", "Circuit Board", "x1"],
+        ["Reinforced Alloy", "Servo Motor", "x1"], ["Micro Battery", "Servo Motor", "x2"],
+        ["Optic Glass", "Targeting Module", "x2"], ["Sensor Lens", "Targeting Module", "x1"], ["Circuit Board", "Targeting Module", "x1"],
+        ["Arc Fragment", "Energy Regulator", "x1"], ["Circuit Board", "Energy Regulator", "x1"], ["Stabilizer Dust", "Energy Regulator", "x1"],
+        ["Polymer", "Nano Weave", "x3"], ["Conductive Gel", "Nano Weave", "x1"],
+        ["Ceramic Plate", "Shock Lining", "x2"], ["Arc Fragment", "Shock Lining", "x1"],
+        ["Reinforced Alloy", "Weapon Chassis", "x2"], ["Servo Motor", "Weapon Chassis", "x1"],
+        ["Reinforced Alloy", "Rail Assembly", "x2"], ["Copper Coil", "Rail Assembly", "x3"], ["Energy Regulator", "Rail Assembly", "x1"],
+        ["Micro Battery", "Pulse Core", "x2"], ["Arc Fragment", "Pulse Core", "x1"], ["Energy Regulator", "Pulse Core", "x1"],
+
+        ["Nano Weave", "Med Injector", "x1"], ["Micro Battery", "Med Injector", "x1"],
+        ["Circuit Board", "EMP Grenade", "x1"], ["Pulse Core", "EMP Grenade", "x1"],
+        ["Polymer", "Repair Foam", "x2"], ["Conductive Gel", "Repair Foam", "x2"],
+        ["Targeting Module", "Jammer Beacon", "x1"], ["Pulse Core", "Jammer Beacon", "x1"],
+
+        ["Weapon Chassis", "Ranger Carbine", "x1"], ["Targeting Module", "Ranger Carbine", "x1"], ["Reinforced Alloy", "Ranger Carbine", "x2"],
+        ["Weapon Chassis", "Volt SMG", "x1"], ["Pulse Core", "Volt SMG", "x1"], ["Servo Motor", "Volt SMG", "x1"],
+        ["Weapon Chassis", "Tempest Shotgun", "x1"], ["Shock Lining", "Tempest Shotgun", "x2"], ["Reinforced Alloy", "Tempest Shotgun", "x2"],
+        ["Rail Assembly", "Arc Railgun", "x1"], ["Targeting Module", "Arc Railgun", "x1"], ["Pulse Core", "Arc Railgun", "x1"],
+        ["Reinforced Alloy", "Ion Sidearm", "x1"], ["Energy Regulator", "Ion Sidearm", "x1"],
+
+        ["Nano Weave", "Scout Vest", "x2"], ["Reinforced Alloy", "Scout Vest", "x1"],
+        ["Shock Lining", "Bulwark Armor", "x2"], ["Reinforced Alloy", "Bulwark Armor", "x3"], ["Nano Weave", "Bulwark Armor", "x2"],
+        ["Nano Weave", "Recon Helmet", "x1"], ["Targeting Module", "Recon Helmet", "x1"],
+        ["Shock Lining", "Arc Shield Pack", "x2"], ["Pulse Core", "Arc Shield Pack", "x1"], ["Energy Regulator", "Arc Shield Pack", "x1"],
+
+        ["Servo Motor", "Extraction Drill", "x1"], ["Reinforced Alloy", "Extraction Drill", "x2"], ["Energy Regulator", "Extraction Drill", "x1"],
+        ["Circuit Board", "Signal Uplink", "x2"], ["Targeting Module", "Signal Uplink", "x1"], ["Pulse Core", "Signal Uplink", "x1"],
+        ["Servo Motor", "Tactical Grappler", "x1"], ["Nano Weave", "Tactical Grappler", "x1"], ["Reinforced Alloy", "Tactical Grappler", "x1"]
+      ];
+
+      const nodes = new vis.DataSet(
+        ITEMS.map(([label, category], id) => ({
+          id,
+          label,
+          category,
+          color: { background: CATEGORIES[category], border: "#0d1117" },
+          font: { color: "#0d1117", face: "Inter", size: 13 },
+          shape: "dot",
+          size: category === "Raw" ? 18 : 23
+        }))
+      );
+
+      const idByName = Object.fromEntries(ITEMS.map(([name], id) => [name, id]));
+      const edges = new vis.DataSet(
+        RECIPES.map(([from, to, qty], id) => ({
+          id,
+          from: idByName[from],
+          to: idByName[to],
+          arrows: "to",
+          label: qty,
+          color: { color: "#6d7a96", highlight: "#ffffff" },
+          font: { color: "#adb9d1", size: 10, align: "middle" },
+          smooth: { type: "cubicBezier", roundness: 0.22 }
+        }))
+      );
+
+      const network = new vis.Network(
+        document.getElementById("graph"),
+        { nodes, edges },
+        {
+          interaction: { hover: true, navigationButtons: true, multiselect: true },
+          physics: {
+            forceAtlas2Based: { springLength: 170, damping: 0.72 },
+            minVelocity: 0.45,
+            solver: "forceAtlas2Based"
+          },
+          layout: { improvedLayout: true }
+        }
+      );
+
+      const categorySelect = document.getElementById("category");
+      Object.keys(CATEGORIES).forEach((c) => {
+        const option = document.createElement("option");
+        option.value = c;
+        option.textContent = c;
+        categorySelect.appendChild(option);
+      });
+
+      const stats = document.getElementById("stats");
+      const legend = document.getElementById("legend");
+      const counts = ITEMS.reduce((acc, [, cat]) => ((acc[cat] = (acc[cat] || 0) + 1), acc), {});
+      Object.entries(counts).forEach(([cat, count]) => {
+        stats.insertAdjacentHTML("beforeend", `<div class=\"stat\"><strong>${count}</strong><span>${cat}</span></div>`);
+        legend.insertAdjacentHTML("beforeend", `<div class=\"chip\" style=\"border-color:${CATEGORIES[cat]}\">${cat}</div>`);
+      });
+
+      function resetStyles() {
+        nodes.update(nodes.get().map((n) => ({ id: n.id, hidden: false, opacity: 1 })));
+        edges.update(edges.get().map((e) => ({ id: e.id, hidden: false, width: 1 })));
+      }
+
+      function highlightNeighborhood(rootId) {
+        const connected = new Set(network.getConnectedNodes(rootId));
+        connected.add(rootId);
+
+        nodes.update(nodes.get().map((n) => ({
+          id: n.id,
+          color: {
+            background: CATEGORIES[n.category],
+            border: connected.has(n.id) ? "#ffffff" : "#111827"
+          },
+          opacity: connected.has(n.id) ? 1 : 0.2
+        })));
+
+        edges.update(edges.get().map((e) => ({
+          id: e.id,
+          width: e.from === rootId || e.to === rootId ? 3 : 1,
+          color: { color: connected.has(e.from) && connected.has(e.to) ? "#dbe8ff" : "#3a455d" }
+        })));
+      }
+
+      function renderDetails(nodeId) {
+        const node = nodes.get(nodeId);
+        const incoming = RECIPES.filter(([, to]) => idByName[to] === nodeId);
+        const outgoing = RECIPES.filter(([from]) => idByName[from] === nodeId);
+
+        document.getElementById("details").innerHTML = `
+          <h2>${node.label}</h2>
+          <span class="badge">${node.category}</span>
+          <p class="subtitle">${incoming.length === 0 ? "Base-world loot." : "Crafted from:"}</p>
+          <ul>${incoming.length ? incoming.map(([from, , qty]) => `<li>${qty} ${from}</li>`).join("") : "<li>None (raw source item)</li>"}</ul>
+          <p class="subtitle">Used to craft:</p>
+          <ul>${outgoing.length ? outgoing.map(([, to, qty]) => `<li>${qty} ${to}</li>`).join("") : "<li>No downstream recipes</li>"}</ul>
+        `;
+      }
+
+      document.getElementById("search").addEventListener("input", (e) => {
+        const term = e.target.value.trim().toLowerCase();
+        if (!term) return resetStyles();
+
+        nodes.update(nodes.get().map((n) => ({ id: n.id, hidden: !n.label.toLowerCase().includes(term) })));
+        edges.update(edges.get().map((edge) => {
+          const from = nodes.get(edge.from);
+          const to = nodes.get(edge.to);
+          return { id: edge.id, hidden: from.hidden || to.hidden };
+        }));
+      });
+
+      categorySelect.addEventListener("change", (e) => {
+        const selected = e.target.value;
+        resetStyles();
+        if (selected === "all") return;
+
+        nodes.update(nodes.get().map((n) => ({ id: n.id, hidden: n.category !== selected })));
+        edges.update(edges.get().map((edge) => {
+          const from = nodes.get(edge.from);
+          const to = nodes.get(edge.to);
+          return { id: edge.id, hidden: from.hidden || to.hidden };
+        }));
+      });
+
+      document.getElementById("clear").addEventListener("click", () => {
+        document.getElementById("search").value = "";
+        categorySelect.value = "all";
+        resetStyles();
+        document.getElementById("details").innerHTML = "<h2>Select an item</h2><p class='subtitle'>Click any node to inspect recipe inputs and downstream crafts.</p>";
+      });
+
+      network.on("click", (params) => {
+        if (!params.nodes.length) {
+          resetStyles();
+          return;
+        }
+        const nodeId = params.nodes[0];
+        renderDetails(nodeId);
+        highlightNeighborhood(nodeId);
+      });
+    </script>
+  </body>
+</html>
